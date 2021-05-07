@@ -85,33 +85,35 @@ class BinarizeLinear(nn.Linear):
 
         return out
 
-class InputScale(nn.Linear):
-    def __init__(self, *kargs, **kwargs):
-        super(InputScale, self).__init__(*kargs, **kwargs)
+class InputScale(nn.Module):
+    def __init__(self):
+        super().__init__()
 
     def forward(self, input):
         scale_min = -1
         scale_max = 1
-        input = input.type(torch.FloatTensor)
+        input = input.type(torch.FloatTensor).to(input.device)
         Ztmp = scale_min + (scale_max - scale_min) * input / 255
         Zmod = torch.remainder(Ztmp, 0.0078125)
         Xvalue = Ztmp - Zmod
         torch.where(Xvalue == 1, Xvalue - 0.0078125, Xvalue)
-        out = Xvalue.type(torch.FloatTensor)
+        out = Xvalue.type(torch.FloatTensor).to(input.device)
         return out
 
-class SignumActivation(nn.Linear):
-    def __init__(self, *kargs, **kwargs):
-        super(SignumActivation, self).__init__(*kargs, **kwargs)
+class SignumActivation(nn.Module):
+    def __init__(self):
+        super().__init__()
 
     def forward(self, input):
         Z=torch.sign(input);
-        torch.where(Z == 0, 1, Z)
-        self.save_for_backward(input)
+        z_i = Z==0
+        #torch.where(Z == 0., 1., Z)
+        Z[z_i] = 1
+        self.signumInput=input
         return Z
 
     def backward(self,grad_output):
-        input, = self.saved_tensors
+        input, = self.signumInput
         return 2.5*((1/torch.cosh(input))**2)*(grad_output)
 
 class BinarizeConv2d(nn.Conv2d):
@@ -140,15 +142,15 @@ class BinarizeTransposedConv2d(nn.ConvTranspose2d):
         super(BinarizeTransposedConv2d, self).__init__(*kargs, **kwargs)
 
     def forward(self, input):
-        #if input.size(1) != 3:
-        #    input.data = Binarize(input.data)
+        if input.size(1) != 3:
+            input.data = Binarize(input.data)
         if not hasattr(self.weight, 'org'):
             self.weight.org = self.weight.data.clone()
         self.weight.data = Binarize(self.weight.org)
 
         out = nn.functional.conv_transpose2d(input, self.weight, None,
                                              self.stride, self.padding,
-                                             self.groups, self.dilation)
+                                             self.output_padding,self.groups, self.dilation)
 
         if not self.bias is None:
             self.bias.org = self.bias.data.clone()
