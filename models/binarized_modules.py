@@ -67,9 +67,6 @@ def Quantize(tensor, quant_mode='det', params=None, numBits=8):
     return tensor
 
 
-import torch.nn._functions as tnnf
-
-
 class BinarizeLinear(nn.Linear):
     def __init__(self, *kargs, **kwargs):
         super(BinarizeLinear, self).__init__(*kargs, **kwargs)
@@ -88,7 +85,6 @@ class BinarizeLinear(nn.Linear):
 
         return out
 
-
 class InputScale(nn.Linear):
     def __init__(self, *kargs, **kwargs):
         super(InputScale, self).__init__(*kargs, **kwargs)
@@ -98,30 +94,25 @@ class InputScale(nn.Linear):
         scale_max = 1
         input = input.type(torch.FloatTensor)
         Ztmp = scale_min + (scale_max - scale_min) * input / 255
-        Zmod = mod(Ztmp, 0.0078125)
+        Zmod = torch.remainder(Ztmp, 0.0078125)
         Xvalue = Ztmp - Zmod
         torch.where(Xvalue == 1, Xvalue - 0.0078125, Xvalue)
         out = Xvalue.type(torch.FloatTensor)
         return out
 
+class SignumActivation(nn.Linear):
+    def __init__(self, *kargs, **kwargs):
+        super(SignumActivation, self).__init__(*kargs, **kwargs)
 
-#                     scale_min =-1;
-#             scale_max =1;
-#             Ztmp=scale_min + (scale_max - scale_min) .* single(X) ./ 255;
-# %             Ztmp=reshape(Ztmp,1,[]);
-# %             Xvaluetmp = sfi(single(Ztmp),8,7);
-# %             Xvaluetmp2=str2num(Xvaluetmp.Value);
-# %             Xvalue = reshape(Xvaluetmp2,size(X,1),size(X,2),size(X,3),size(X,4));
-# %             Ztmp(-1<Ztmp<0)= Ztmp(-1<Ztmp<0)- 0.0078125;
-#             Zmod=mod(Ztmp,0.0078125);
-#             Xvalue=Ztmp-Zmod;
-#             Xvalue(Xvalue==1)= Xvalue-0.0078125;
-# % % %             Xvalue(Xvalue>=0)=Xvalue(Xvalue>=0)+0.0078125;
-# % % %             Xvalue(Xvalue>1)=Xvalue(Xvalue>1)-0.0078125;
+    def forward(self, input):
+        Z=torch.sign(input);
+        torch.where(Z == 0, 1, Z)
+        self.save_for_backward(input)
+        return Z
 
-#             %             Xvalue=str2double(Xvaluetmp.Value); %str2num
-#             Z=single(Xvalue);
-
+    def backward(self,grad_output):
+        input, = self.saved_tensors
+        return 2.5*((1/torch.cosh(input))**2)*(grad_output)
 
 class BinarizeConv2d(nn.Conv2d):
     def __init__(self, *kargs, **kwargs):
@@ -149,8 +140,8 @@ class BinarizeTransposedConv2d(nn.ConvTranspose2d):
         super(BinarizeTransposedConv2d, self).__init__(*kargs, **kwargs)
 
     def forward(self, input):
-        if input.size(1) != 3:
-            input.data = Binarize(input.data)
+        #if input.size(1) != 3:
+        #    input.data = Binarize(input.data)
         if not hasattr(self.weight, 'org'):
             self.weight.org = self.weight.data.clone()
         self.weight.data = Binarize(self.weight.org)
